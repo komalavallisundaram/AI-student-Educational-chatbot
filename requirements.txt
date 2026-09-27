@@ -6,3 +6,5 @@ scikit-learn==1.5.0
 torch==2.3.0
 tqdm==4.66.4
 transformers==4.41.2
+google-genai==0.1.0
+
