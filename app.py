@@ -1,85 +1,57 @@
+import os
 import streamlit as st
 import pandas as pd
-import google.generativeai as genai
-import time
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import google.genai as genai   # ✅ updated import
 
-# --- Configure Gemini API key (must start with AIza...) ---
-genai.configure(api_key="AQ.Ab8RN6LMr1M-52QfqOlGJZULKkTT66SqET-G0-TscaARaGjxYQ")
+# Configure Google Gemini API
+genai.configure(api_key=os.getenv("AQ.Ab8RN6KE5erkkL1hUFIW_fcWyPKZ8cUefvu_gIOP1tirxq2RkQ"))
+client = genai.Client()
 
-# Load dataset
-data_file = r"C:/Users/shenbagam/videos/apanaa/QAfinalcleaned_expanded.csv"
-df = pd.read_csv(data_file)
+# Load dataset and embeddings
+qa_data = pd.read_csv("QA_final_cleaned.csv")
+embeddings = np.loadtxt("question_embeddings.csv", delimiter=",")
 
-# Initialize Gemini model
-model = genai.GenerativeModel("gemini-2.5-flash")
+# Load Sentence Transformer model
+model = SentenceTransformer("paraphrase-MiniLM-L3-v2")
 
-def answer_from_gemini(q):
-    try:
-        response = model.generate_content(
-            f"Answer this question clearly in a short explanatory paragraph: {q}"
+# Streamlit UI
+st.title("AI-Powered Educational Chatbot")
+
+# Chat history
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+
+# Chat input
+user_question = st.text_input("Ask a question:")
+
+if user_question:
+    # Step 1: Encode query
+    query_embedding = model.encode([user_question], convert_to_numpy=True)
+
+    # Step 2: Compare with stored embeddings
+    similarities = cosine_similarity(query_embedding, embeddings)
+    best_idx = np.argmax(similarities)
+    best_score = similarities[0][best_idx]
+
+    # Step 3: Decision logic
+    if best_score >= 0.5:
+        answer = qa_data.iloc[best_idx]["Answer"]
+        response = f"Matched Question: {qa_data.iloc[best_idx]['Question']}\nSimilarity: {best_score:.2f}\nAnswer: {answer}"
+    else:
+        # Fallback → use Gemini for explanation
+        gemini_response = client.models.generate_content(
+            model="gemini-1.5-flash",   # ✅ updated model name
+            contents=f"Explain this question in simple words: {user_question}"
         )
-        return response.text.strip()
-    except Exception as e:
-        return f"⚠️ Error: {str(e)}"
+        response = gemini_response.text
 
-def get_answer_from_csv(q):
-    match = df[df['Question'].str.lower() == q.lower()]
-    if not match.empty:
-        return match.iloc[0]['Answer']
-    return None
+    # Save to chat history
+    st.session_state["messages"].append({"user": user_question, "bot": response})
 
-def main():
-    st.title("📘 Dual Q&A Streamlit App")
-
-    # Initialize chat history
-    if "history" not in st.session_state:
-        st.session_state.history = []
-
-    # Split into two sections
-    tab1, tab2 = st.tabs(["Dataset Q&A", "ChatGPT Q&A"])
-
-    # --- Section 1: Dataset Q&A ---
-    with tab1:
-        st.subheader("Select a question from the dataset")
-        question_list = df['Question'].tolist()
-        selected_q = st.selectbox("Choose a question:", question_list)
-
-        if st.button("Get Dataset Answer"):
-            with st.spinner("Fetching answer..."):
-                time.sleep(1)
-                answer = get_answer_from_csv(selected_q)
-                st.write(f"**Answer:** {answer}")
-                st.session_state.history.append((selected_q, answer))
-
-    # --- Section 2: ChatGPT/Gemini Q&A ---
-    with tab2:
-        st.subheader("Ask your own question")
-        user_q = st.text_input("Type your question here:")
-
-        if st.button("Get ChatGPT Answer"):
-            if user_q.strip():
-                with st.spinner("Generating answer..."):
-                    time.sleep(1)
-                    # First check CSV
-                    answer = get_answer_from_csv(user_q)
-                    if answer:
-                        final_answer = answer
-                    else:
-                        final_answer = answer_from_gemini(user_q)
-
-                st.write(f"**Answer:** {final_answer}")
-                st.session_state.history.append((user_q, final_answer))
-            else:
-                st.warning("Please enter a question.")
-
-    # --- Sidebar Chat History ---
-    st.sidebar.title("📝 Chat History")
-    if st.sidebar.button("Clear History"):
-        st.session_state.history = []
-
-    for i, (q, a) in enumerate(st.session_state.history, 1):
-        st.sidebar.markdown(f"**Q{i}:** {q}")
-        st.sidebar.markdown(f"*A{i}:* {a}")
-
-if __name__ == "__main__":
-    main()
+# Display chat history
+for msg in st.session_state["messages"]:
+    st.write(f"**You:** {msg['user']}")
+    st.write(f"**Bot:** {msg['bot']}")
